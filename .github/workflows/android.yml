@@ -1,0 +1,48 @@
+name: Build Android APK
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "fat = fastest game, long build; thin = safer if fat fails"
+        type: choice
+        default: fat
+        options: [fat, thin]
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unpack source
+        run: |
+          unzip -q ./*.zip
+          echo "SRC=$(find . -maxdepth 1 -type d -name 'openOMSI-*' | head -1)" >> "$GITHUB_ENV"
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '17'
+      - name: Android SDK
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$sdkmanager" --licenses >/dev/null || true
+          "$sdkmanager" "platforms;android-35" "build-tools;35.0.0" "ndk;28.2.13676358" >/dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+      - name: Build
+        run: |
+          cd "$SRC"
+          if [ "${{ inputs.mode }}" = "thin" ]; then
+            export CARGO_PROFILE_ANDROID_LTO=thin
+            export CARGO_PROFILE_ANDROID_CODEGEN_UNITS=4
+          fi
+          export OPENOMSI_VERSION=0.3.57
+          sh scripts/build-android.sh
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          cp dist/android/*.apk "$GITHUB_WORKSPACE/out/"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openOMSI-apk
+          path: out/*.apk
